@@ -73,5 +73,6 @@ public:
 
     std::size_t Size() const;
     OrderbookLevelInfos GetOrderInfos() const;
+    void PrintOrderbook(int levels = 5) const;
 };
 
