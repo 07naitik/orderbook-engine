@@ -3,6 +3,9 @@
 #include <numeric>
 #include <chrono>
 #include <ctime>
+#include <iostream>
+#include <iomanip>
+#include <algorithm>
 
 void Orderbook::PruneGoodForDayOrders()
 {    
@@ -43,10 +46,14 @@ void Orderbook::PruneGoodForDayOrders()
 			{
 				const auto& [order, _] = entry;
 
-				if (order->GetOrderType() != OrderType::GoodForDay)
-					continue;
-
-				orderIds.push_back(order->GetOrderId());
+				if (order->GetOrderType() == OrderType::GoodForDay)
+				{
+					orderIds.push_back(order->GetOrderId());
+				}
+				else if (order->GetOrderType() == OrderType::GoodTillTime && order->IsExpired())
+				{
+					orderIds.push_back(order->GetOrderId());
+				}
 			}
 		}
 
@@ -374,5 +381,115 @@ OrderbookLevelInfos Orderbook::GetOrderInfos() const
 
 	return OrderbookLevelInfos{ bidInfos, askInfos };
 
+}
+
+void Orderbook::PrintOrderbook(int levels) const
+{
+	std::scoped_lock ordersLock{ ordersMutex_ };
+
+	std::cout << "\n========== ORDERBOOK ==========\n";
+
+	// Collect ask levels (sorted from lowest to highest)
+	std::vector<std::pair<Price, LevelData>> askLevels;
+	for (const auto& [price, levelData] : data_)
+	{
+		// Check if this price exists in asks_
+		if (asks_.find(price) != asks_.end())
+		{
+			askLevels.push_back({ price, levelData });
+		}
+	}
+	std::sort(askLevels.begin(), askLevels.end());
+
+	// Collect bid levels (sorted from highest to lowest)
+	std::vector<std::pair<Price, LevelData>> bidLevels;
+	for (const auto& [price, levelData] : data_)
+	{
+		// Check if this price exists in bids_
+		if (bids_.find(price) != bids_.end())
+		{
+			bidLevels.push_back({ price, levelData });
+		}
+	}
+	std::sort(bidLevels.begin(), bidLevels.end(), std::greater<>());
+
+	// Find max quantity for bar chart scaling
+	Quantity maxQuantity = 0;
+	for (const auto& [_, levelData] : askLevels)
+		maxQuantity = std::max(maxQuantity, levelData.quantity_);
+	for (const auto& [_, levelData] : bidLevels)
+		maxQuantity = std::max(maxQuantity, levelData.quantity_);
+
+	// Print ASKS
+	std::cout << "ASKS (Sell Orders):\n";
+	if (askLevels.empty())
+	{
+		std::cout << "  (none)\n";
+	}
+	else
+	{
+		int displayCount = std::min(levels, static_cast<int>(askLevels.size()));
+		for (int i = displayCount - 1; i >= 0; --i)
+		{
+			const auto& [price, levelData] = askLevels[i];
+			double priceInDollars = price / 100.0;
+			
+			// Calculate bar length (max 20 characters)
+			int barLength = maxQuantity > 0 ? static_cast<int>((levelData.quantity_ * 20.0) / maxQuantity) : 0;
+			std::string bar(barLength, '\xDB'); // █ character
+
+			std::cout << "  $" << std::fixed << std::setprecision(2) << std::setw(7) << priceInDollars
+				<< " | " << std::setw(6) << levelData.quantity_ << " shares ("
+				<< std::setw(2) << levelData.count_ << " orders) " << bar << "\n";
+		}
+	}
+
+	// Calculate and print SPREAD
+	if (!bidLevels.empty() && !askLevels.empty())
+	{
+		Price bestBid = bidLevels[0].first;
+		Price bestAsk = askLevels[0].first;
+		double spread = (bestAsk - bestBid) / 100.0;
+		std::cout << "\n        --- SPREAD: $" << std::fixed << std::setprecision(2) << spread << " ---\n\n";
+	}
+	else if (bidLevels.empty() && !askLevels.empty())
+	{
+		std::cout << "\n        --- NO BIDS (No Spread) ---\n\n";
+	}
+	else if (!bidLevels.empty() && askLevels.empty())
+	{
+		std::cout << "\n        --- NO ASKS (No Spread) ---\n\n";
+	}
+	else
+	{
+		std::cout << "\n        --- EMPTY ORDERBOOK ---\n\n";
+	}
+
+	// Print BIDS
+	std::cout << "BIDS (Buy Orders):\n";
+	if (bidLevels.empty())
+	{
+		std::cout << "  (none)\n";
+	}
+	else
+	{
+		int displayCount = std::min(levels, static_cast<int>(bidLevels.size()));
+		for (int i = 0; i < displayCount; ++i)
+		{
+			const auto& [price, levelData] = bidLevels[i];
+			double priceInDollars = price / 100.0;
+			
+			// Calculate bar length (max 20 characters)
+			int barLength = maxQuantity > 0 ? static_cast<int>((levelData.quantity_ * 20.0) / maxQuantity) : 0;
+			std::string bar(barLength, '\xDB'); // █ character
+
+			std::cout << "  $" << std::fixed << std::setprecision(2) << std::setw(7) << priceInDollars
+				<< " | " << std::setw(6) << levelData.quantity_ << " shares ("
+				<< std::setw(2) << levelData.count_ << " orders) " << bar << "\n";
+		}
+	}
+
+	std::cout << "===============================\n";
+	std::cout << "Total Orders: " << orders_.size() << "\n\n";
 }
 
