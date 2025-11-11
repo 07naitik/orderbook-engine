@@ -6,5 +6,6 @@ enum class OrderType
 	FillAndKill,
 	FillOrKill,
 	GoodForDay,
+	GoodTillTime,
 	Market,
 };
